@@ -1,0 +1,300 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>NPS Responses — Secure View</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0b0f17; --panel:#121826; --muted:#9aa4b2; --text:#e5ecf4; --accent:#4f46e5; --accent-2:#22c55e; --error:#ef4444; --ok:#22c55e; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif; background:var(--bg); color:var(--text); }
+    .container { max-width: 980px; margin: 24px auto; padding: 0 16px; }
+    .card { background:var(--panel); border:1px solid #1e293b; border-radius:14px; padding:18px; box-shadow:0 10px 40px rgba(0,0,0,.35); }
+    h1 { margin:0 0 6px; font-size:1.35rem; }
+    p.desc { margin:0 0 12px; color:var(--muted); }
+    .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:8px 0 16px; }
+    .toolbar .grow { flex:1; }
+    .chip { color:#cbd5e1; border:1px solid #334155; background:#0f172a; padding:8px 10px; border-radius:999px; font-size:.9rem; }
+    .btn { appearance:none; border:1px solid #334155; background:#0f172a; color:#e2e8f0; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:600; transition: all .15s ease; }
+    .btn.primary { background:var(--accent); border-color:var(--accent); }
+    .btn:disabled { opacity:.6; cursor:not-allowed; }
+    .search { flex:1; min-width:200px; border:1px solid #334155; border-radius:10px; padding:10px 12px; background:#0f172a; color:#e2e8f0; }
+    .summary { display:grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap:10px; margin:10px 0 14px; }
+    .kpi { background:#0f172a; border:1px solid #334155; border-radius:12px; padding:12px; }
+    .kpi h3 { margin:0 0 4px; font-size:.95rem; color:#cbd5e1; }
+    .kpi .val { font-size:1.4rem; font-weight:700; }
+    .kpi small { color:var(--muted); }
+    table { width:100%; border-collapse: collapse; margin-top: 6px; }
+    th, td { padding:10px 8px; border-bottom:1px solid #223047; vertical-align: top; }
+    th { text-align:left; color:#cbd5e1; cursor:pointer; user-select:none; }
+    tr:hover td { background:rgba(255,255,255,0.02); }
+    .score { font-weight:700; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:.8rem; border:1px solid #334155; }
+    .pill.detractor { background:#2a0f10; color:#fecaca; }
+    .pill.passive { background:#1a1f2a; color:#e5e7eb; }
+    .pill.promoter { background:#0f2a17; color:#bbf7d0; }
+    .status { min-height:24px; margin-left:auto; color:var(--muted); }
+    .ok { color:var(--ok); }
+    .err { color:var(--error); }
+    @media (max-width: 720px) {
+      .summary { grid-template-columns: 1fr 1fr; }
+      th.hide-sm, td.hide-sm { display:none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>NPS Responses — Secure View</h1>
+      <p class="desc">Only signed-in users can view these submissions from <code>public.nps_responses</code>.</p>
+
+      <!-- Auth-aware toolbar -->
+      <div class="toolbar">
+        <input id="search" class="search grow" type="search" placeholder="Filter by feedback text…" />
+        <button id="refreshBtn" class="btn">Refresh</button>
+        <button id="exportBtn" class="btn">Export CSV</button>
+        <span id="userChip" class="chip" title="Signed in user" style="display:none;"></span>
+        <button id="signoutBtn" class="btn" title="Sign out" style="display:none;">Sign out</button>
+        <span id="status" class="status"></span>
+      </div>
+
+      <div class="summary" role="region" aria-label="NPS summary">
+        <div class="kpi">
+          <h3>Responses</h3>
+          <div class="val" id="kpi-count">—</div>
+        </div>
+        <div class="kpi">
+          <h3>Average Score</h3>
+          <div class="val" id="kpi-avg">—</div>
+          <small>(1–10)</small>
+        </div>
+        <div class="kpi">
+          <h3>Promoters (9–10)</h3>
+          <div class="val" id="kpi-promoters">—</div>
+        </div>
+        <div class="kpi">
+          <h3>Detractors (1–6)</h3>
+          <div class="val" id="kpi-detractors">—</div>
+        </div>
+      </div>
+
+      <table aria-label="Responses table">
+        <thead>
+          <tr>
+            <th data-sort="created_at">Created</th>
+            <th class="hide-sm" data-sort="score">Score</th>
+            <th>Segment</th>
+            <th data-sort="feedback">Feedback</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <!-- rows go here -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script type="module">
+    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+    // Your project values
+    const SUPABASE_URL = "https://dsewdgwwoyyoexlbqjgl.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_kYpN_WBNeJH2PxHSLCtzcA_sXJX4Vsg";
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // ---- UI refs
+    const tbody = document.getElementById("tbody");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const exportBtn = document.getElementById("exportBtn");
+    const statusEl = document.getElementById("status");
+    const searchEl = document.getElementById("search");
+    const signoutBtn = document.getElementById("signoutBtn");
+    const userChip = document.getElementById("userChip");
+
+    const kCount = document.getElementById("kpi-count");
+    const kAvg = document.getElementById("kpi-avg");
+    const kPromoters = document.getElementById("kpi-promoters");
+    const kDetractors = document.getElementById("kpi-detractors");
+
+    // ---- sorting state
+    let currentSort = { column: "created_at", dir: "desc" }; // or 'asc'
+    let fullData = [];   // All rows fetched (no pagination)
+
+    function setStatus(msg, type = "") {
+      statusEl.textContent = msg || "";
+      statusEl.className = "status " + (type || "");
+    }
+
+    function fmtDate(iso) {
+      try { return new Date(iso).toLocaleString(); } catch { return iso; }
+    }
+
+    function segmentFor(score) {
+      if (score >= 9) return "promoter";
+      if (score >= 7) return "passive";
+      return "detractor";
+    }
+
+    function renderSummary(rows) {
+      const count = rows.length;
+      const sum = rows.reduce((a, r) => a + (Number(r.score) || 0), 0);
+      const avg = count ? (sum / count).toFixed(2) : "—";
+      const detractors = rows.filter(r => r.score <= 6).length;
+      const promoters = rows.filter(r => r.score >= 9).length;
+
+      kCount.textContent = String(count);
+      kAvg.textContent = String(avg);
+      kPromoters.textContent = `${promoters} (${count ? Math.round(promoters*100/count) : 0}%)`;
+      kDetractors.textContent = `${detractors} (${count ? Math.round(detractors*100/count) : 0}%)`;
+    }
+
+    function compare(a, b, col, dir) {
+      const va = a[col];
+      const vb = b[col];
+      let cmp = 0;
+      if (col === "score") {
+        cmp = (Number(va) || 0) - (Number(vb) || 0);
+      } else if (col === "created_at") {
+        cmp = new Date(va) - new Date(vb);
+      } else {
+        cmp = String(va || "").localeCompare(String(vb || ""), undefined, { sensitivity: "base" });
+      }
+      return dir === "asc" ? cmp : -cmp;
+    }
+
+    function sanitize(text) {
+      return String(text ?? "").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    function renderTable(rows) {
+      tbody.innerHTML = "";
+      const frag = document.createDocumentFragment();
+      for (const r of rows) {
+        const seg = segmentFor(r.score);
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${fmtDate(r.created_at)}</td>
+          <td class="hide-sm score">${r.score}</td>
+          <td><span class="pill ${seg}">${seg}</span></td>
+          <td>${sanitize(r.feedback)}</td>
+        `;
+        frag.appendChild(tr);
+      }
+      tbody.appendChild(frag);
+    }
+
+    function getFiltered() {
+      const q = (searchEl.value || "").trim().toLowerCase();
+      if (!q) return fullData;
+      return fullData.filter(r => (r.feedback || "").toLowerCase().includes(q));
+    }
+
+    function render() {
+      const filtered = [...getFiltered()].sort((a,b)=>compare(a,b,currentSort.column,currentSort.dir));
+      renderSummary(filtered);
+      renderTable(filtered);
+    }
+
+    async function fetchAll() {
+      setStatus("Loading…");
+      const { data, error } = await supabase
+        .from("nps_responses")
+        .select("score, feedback, created_at")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error(error);
+        setStatus(`Load failed: ${error.message}`, "err");
+        return;
+      }
+      fullData = data || [];
+      setStatus(`Loaded ${fullData.length} row(s).`, "ok");
+      render();
+    }
+
+    function wireSorting() {
+      document.querySelectorAll("th[data-sort]").forEach(th => {
+        th.addEventListener("click", () => {
+          const col = th.getAttribute("data-sort");
+          if (currentSort.column === col) {
+            currentSort.dir = currentSort.dir === "asc" ? "desc" : "asc";
+          } else {
+            currentSort = { column: col, dir: (col === "created_at" ? "desc" : "asc") };
+          }
+          render();
+        });
+      });
+    }
+
+    function wireActions() {
+      refreshBtn.addEventListener("click", fetchAll);
+      exportBtn.addEventListener("click", () => {
+        const filtered = [...getFiltered()].sort((a,b)=>compare(a,b,currentSort.column,currentSort.dir));
+        const rows = [["created_at","score","segment","feedback"], ...filtered.map(r => [
+          r.created_at,
+          r.score,
+          segmentFor(r.score),
+          (r.feedback || "").replaceAll('"','""')
+        ])];
+        const csv = rows.map(r => r.map(v => `"${String(v ?? "")}"`).join(",")).join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `nps_responses_all_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      });
+
+      signoutBtn.addEventListener("click", async () => {
+        await supabase.auth.signOut();
+        window.location.href = "login.html";
+      });
+
+      searchEl.addEventListener("input", render);
+    }
+
+    async function requireSession() {
+      // Redirect to login if no session
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        window.location.href = "login.html";
+        throw new Error("Not authenticated");
+      }
+
+      // Show user chip + signout
+      const userEmail = session.user?.email || "Signed in";
+      userChip.textContent = userEmail;
+      userChip.style.display = "inline-block";
+      signoutBtn.style.display = "inline-block";
+
+      // If user signs out in another tab, bounce back to login
+      supabase.auth.onAuthStateChange((_event, sess) => {
+        if (!sess) window.location.href = "login.html";
+      });
+
+      return session;
+    }
+
+    async function init() {
+      try {
+        wireSorting();
+        wireActions();
+        await requireSession();
+        await fetchAll();
+      } catch (e) {
+        // Swallow error if we intentionally redirected
+        if (String(e?.message || "").includes("Not authenticated")) return;
+        console.error(e);
+        setStatus("Unexpected error. See console.", "err");
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
