@@ -20,8 +20,25 @@
     .btn.primary { background:var(--accent); border-color:var(--accent); }
     .btn:disabled { opacity:.6; cursor:not-allowed; }
     .search { flex:1; min-width:200px; border:1px solid #334155; border-radius:10px; padding:10px 12px; background:#0f172a; color:#e2e8f0; }
-    .summary { display:grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap:10px; margin:10px 0 14px; }
-    .kpi { background:#0f172a; border:1px solid #334155; border-radius:12px; padding:12px; }
+    .summary {
+      display: flex;
+      gap: 10px;
+      /* stay on one line */
+      flex-wrap: nowrap;
+
+      /* scroll if too many cards */
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      scroll-snap-type: x proximity;
+      padding-bottom: 4px; /* avoids scrollbar overlapping rounded corners */
+    }
+    .summary .kpi {
+      min-width: 120px;   /* adjust to taste */
+      flex: 0 0 auto;     /* don’t stretch; keep natural width */
+      scroll-snap-align: start;
+    }
+
     .kpi h3 { margin:0 0 4px; font-size:.95rem; color:#cbd5e1; }
     .kpi .val { font-size:1.4rem; font-weight:700; }
     .kpi small { color:var(--muted); }
@@ -30,13 +47,14 @@
     th { text-align:left; color:#cbd5e1; cursor:pointer; user-select:none; }
     tr:hover td { background:rgba(255,255,255,0.02); }
     .score { font-weight:700; }
-    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:.8rem; border:1px solid #334155; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:.8rem; border:1px solid #334155; text-transform: capitalize; }
     .pill.detractor { background:#2a0f10; color:#fecaca; }
-    .pill.passive { background:#1a1f2a; color:#e5e7eb; }
-    .pill.promoter { background:#0f2a17; color:#bbf7d0; }
+    .pill.passive   { background:#1a1f2a; color:#e5e7eb; }
+    .pill.promoter  { background:#0f2a17; color:#bbf7d0; }
     .status { min-height:24px; margin-left:auto; color:var(--muted); }
     .ok { color:var(--ok); }
     .err { color:var(--error); }
+
     @media (max-width: 720px) {
       .summary { grid-template-columns: 1fr 1fr; }
       th.hide-sm, td.hide-sm { display:none; }
@@ -70,11 +88,20 @@
           <small>(1–10)</small>
         </div>
         <div class="kpi">
+          <h3>NPS Score</h3>
+          <div class="val" id="kNPS">—</div>
+          <small>(-100–100)</small>
+        </div>
+        <div class="kpi">
           <h3>Promoters (9–10)</h3>
           <div class="val" id="kpi-promoters">—</div>
         </div>
         <div class="kpi">
-          <h3>Detractors (1–6)</h3>
+          <h3>Passives (7–8)</h3>
+          <div class="val" id="kpi-passives">—</div>
+        </div>
+        <div class="kpi">
+          <h3>Detractors (0–6)</h3>
           <div class="val" id="kpi-detractors">—</div>
         </div>
       </div>
@@ -116,7 +143,9 @@
     const kCount = document.getElementById("kpi-count");
     const kAvg = document.getElementById("kpi-avg");
     const kPromoters = document.getElementById("kpi-promoters");
+    const kPassives = document.getElementById("kpi-passives");
     const kDetractors = document.getElementById("kpi-detractors");
+    const kNPS = document.getElementById("kNPS"); // fixed id
 
     // ---- sorting state
     let currentSort = { column: "created_at", dir: "desc" }; // or 'asc'
@@ -132,22 +161,44 @@
     }
 
     function segmentFor(score) {
-      if (score >= 9) return "promoter";
-      if (score >= 7) return "passive";
+      const s = Number(score);
+      if (!Number.isFinite(s)) return "unknown";
+      if (s >= 9) return "promoter";
+      if (s >= 7) return "passive";
       return "detractor";
     }
 
     function renderSummary(rows) {
-      const count = rows.length;
-      const sum = rows.reduce((a, r) => a + (Number(r.score) || 0), 0);
-      const avg = count ? (sum / count).toFixed(2) : "—";
-      const detractors = rows.filter(r => r.score <= 6).length;
-      const promoters = rows.filter(r => r.score >= 9).length;
+      // Normalize scores to numbers and filter out invalid entries
+      const scores = rows
+        .map(r => Number(r.score))
+        .filter(s => Number.isFinite(s)); // keep only valid numeric scores
 
-      kCount.textContent = String(count);
-      kAvg.textContent = String(avg);
-      kPromoters.textContent = `${promoters} (${count ? Math.round(promoters*100/count) : 0}%)`;
-      kDetractors.textContent = `${detractors} (${count ? Math.round(detractors*100/count) : 0}%)`;
+      const count = scores.length;
+      const sum = scores.reduce((a, s) => a + s, 0);
+      const avg = count ? (sum / count) : null;
+
+      const detractors = scores.filter(s => s <= 6).length;
+      const passives   = scores.filter(s => s >= 7 && s <= 8).length;
+      const promoters  = scores.filter(s => s >= 9).length;
+
+      // Percentages (integer; change to .toFixed(1) if you want decimals)
+      const pct = (n) => count ? Math.round((n * 100) / count) : 0;
+
+      // Standard NPS (-100..100)
+      const nps = count ? Math.round(((promoters - detractors) * 100) / count) : null;
+
+      // Update the DOM
+      if (kCount)      kCount.textContent = count.toString();
+      if (kAvg)        kAvg.textContent   = avg !== null ? avg.toFixed(2) : "—";
+
+      // Show the standard NPS number, with sign for positive values
+      if (kNPS)        kNPS.textContent   = nps !== null ? (nps > 0 ? `+${nps}` : `${nps}`) : "—";
+
+      // Breakdown KPIs
+      if (kPromoters)  kPromoters.textContent  = `${promoters} (${pct(promoters)}%)`;
+      if (kPassives)   kPassives.textContent   = `${passives} (${pct(passives)}%)`;
+      if (kDetractors) kDetractors.textContent = `${detractors} (${pct(detractors)}%)`;
     }
 
     function compare(a, b, col, dir) {
@@ -176,7 +227,7 @@
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${fmtDate(r.created_at)}</td>
-          <td class="hide-sm score">${r.score}</td>
+          <td class="hide-sm score">${sanitize(r.score)}</td>
           <td><span class="pill ${seg}">${seg}</span></td>
           <td>${sanitize(r.feedback)}</td>
         `;

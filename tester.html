@@ -1,0 +1,305 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Data Browser</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --panel: #121826;
+      --muted: #64748b;
+      --text: #e2e8f0;
+      --accent: #4f46e5;
+      --border: #263043;
+      --chip: #1e293b;
+    }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;
+      color: var(--text); background: var(--bg); height: 100vh; display: grid; grid-template-columns: 260px 1fr;
+    }
+    aside {
+      border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 100vh;
+    }
+    header {
+      padding: 14px 16px; border-bottom: 1px solid var(--border); font-weight: 600;
+    }
+    .schema-row {
+      padding: 8px 16px; display: flex; gap: 8px; align-items: center; color: var(--muted);
+      border-bottom: 1px dashed rgba(255,255,255,0.06);
+    }
+    .nav {
+      overflow: auto; padding: 8px;
+    }
+    .nav button {
+      width: 100%; text-align: left; display: block; background: transparent; color: var(--text);
+      border: 1px solid transparent; border-radius: 8px; padding: 8px 10px; cursor: pointer;
+    }
+    .nav button:hover { background: rgba(79,70,229,0.12); border-color: rgba(79,70,229,0.35); }
+    .nav .meta { font-size: 12px; color: var(--muted); }
+    main { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; }
+    .toolbar {
+      border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+      background: linear-gradient(180deg, rgba(79,70,229,0.2), transparent 120px);
+    }
+    .chip { background: var(--chip); border: 1px solid var(--border); border-radius: 999px; padding: 6px 10px; font-size: 12px; color: var(--muted); }
+    .content { padding: 12px; overflow: auto; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: top; }
+    th { position: sticky; top: 0; background: #0e1526; text-align: left; }
+    th button { background: transparent; border: none; color: var(--text); cursor: pointer; font-weight: 600; }
+    .muted { color: var(--muted); }
+    .pager { display: flex; align-items: center; gap: 8px; }
+    .pager button { background: var(--chip); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 6px 10px; cursor: pointer; }
+    .error { color: #fca5a5; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25); padding: 8px 10px; border-radius: 8px; }
+    .success { color: #86efac; }
+    .row-access { font-size: 11px; color: var(--muted); }
+    .right { margin-left: auto; }
+  </style>
+</head>
+<body>
+  <aside>
+    <header>Data Browser</header>
+    <div class="schema-row">
+      <span>Schema:</span>
+      <select id="schemaSelect">
+        <option value="public">public</option>
+      </select>
+      <span class="right chip" id="authState">anon</span>
+    </div>
+    <div class="nav" id="nav"></div>
+  </aside>
+
+  <main>
+    <div class="toolbar">
+      <div id="currentTable" class="chip">Select a table</div>
+      <div class="chip" id="rowAccessInfo" title="RLS visibility test"></div>
+      <div class="chip" id="countInfo"></div>
+      <div class="right pager">
+        <button id="prevBtn">Prev</button>
+        <span id="pageInfo" class="muted">Page 1</span>
+        <button id="nextBtn">Next</button>
+      </div>
+    </div>
+    <div class="content">
+      <div id="messages"></div>
+      <table id="dataTable"></table>
+    </div>
+  </main>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    // ====== CONFIG ======
+    const SUPABASE_URL = 'https://dsewdgwwoyyoexlbqjgl.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_kYpN_WBNeJH2PxHSLCtzcA_sXJX4Vsg';
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    // ====== STATE ======
+    let currentSchema = 'public';
+    let relations = [];        // [{obj_type, name, row_accessible}]
+    let currentTable = null;   // string
+    let page = 1;
+    const pageSize = 50;
+    let sortBy = null;         // column name
+    let sortAsc = true;
+
+    // ====== DOM ======
+    const navEl = document.getElementById('nav');
+    const schemaSelect = document.getElementById('schemaSelect');
+    const currentTableEl = document.getElementById('currentTable');
+    const rowAccessInfoEl = document.getElementById('rowAccessInfo');
+    const countInfoEl = document.getElementById('countInfo');
+    const dataTableEl = document.getElementById('dataTable');
+    const messagesEl = document.getElementById('messages');
+    const pageInfoEl = document.getElementById('pageInfo');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const authStateEl = document.getElementById('authState');
+
+    // ====== Helpers ======
+    const showError = (msg) => {
+      messagesEl.innerHTML = `<div class="error">${msg}</div>`;
+      console.error(msg);
+    };
+    const clearMessages = () => { messagesEl.innerHTML = ''; };
+
+    const refreshAuthState = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      authStateEl.textContent = session?.user ? 'signed-in' : 'anon';
+      authStateEl.className = 'right chip ' + (session?.user ? 'success' : '');
+    };
+
+    // List relations visible to this role (via RPC)
+    const fetchRelations = async () => {
+      const { data, error } = await supabase.rpc('list_accessible_relations', {
+        p_schema: currentSchema,
+        p_include_views: true
+      });
+      if (error) {
+        showError('Could not load relations: ' + (error.message ?? error));
+        return [];
+      }
+      return data.sort((a, b) => a.name.localeCompare(b.name));
+    };
+
+    const renderNav = () => {
+      navEl.innerHTML = '';
+      if (!relations.length) {
+        navEl.innerHTML = `<div class="muted">No tables/views visible in "${currentSchema}".</div>`;
+        return;
+      }
+      relations.forEach(rel => {
+        const btn = document.createElement('button');
+        btn.innerHTML = `
+          <div><strong>${rel.name}</strong> <span class="meta">(${rel.obj_type})</span></div>
+          <div class="row-access">rows visible: ${rel.row_accessible ? 'yes' : 'no / RLS'}</div>
+        `;
+        btn.addEventListener('click', () => {
+          currentTable = rel.name;
+          page = 1;
+          sortBy = null;
+          sortAsc = true;
+          loadTableData();
+        });
+        navEl.appendChild(btn);
+      });
+    };
+
+    const loadRelations = async () => {
+      clearMessages();
+      relations = await fetchRelations();
+      renderNav();
+    };
+
+    // Load table rows
+    const loadTableData = async () => {
+      if (!currentTable) return;
+
+      clearMessages();
+      currentTableEl.textContent = `${currentSchema}.${currentTable}`;
+
+      // find RLS probe result for chip
+      const rel = relations.find(r => r.name === currentTable);
+      rowAccessInfoEl.textContent = rel ? (rel.row_accessible ? 'rows visible: yes' : 'rows visible: no / RLS') : '';
+
+      // Build query
+      let query = supabase
+        .from(currentTable)
+        .select('*', { count: 'estimated', head: false })
+        .range((page - 1) * pageSize, page * pageSize - 1);
+
+      if (sortBy) query = query.order(sortBy, { ascending: sortAsc, nullsFirst: false });
+
+      const { data, error, count } = await query;
+
+      if (error) {
+        showError(`Error loading ${currentTable}: ${error.message ?? error}`);
+        dataTableEl.innerHTML = '';
+        countInfoEl.textContent = '';
+        pageInfoEl.textContent = `Page ${page}`;
+        return;
+      }
+
+      countInfoEl.textContent = (typeof count === 'number')
+        ? `~${count.toLocaleString()} rows`
+        : '';
+
+      pageInfoEl.textContent = `Page ${page}`;
+
+      renderTable(data ?? []);
+    };
+
+    const renderTable = (rows) => {
+      if (!rows.length) {
+        dataTableEl.innerHTML = '<tr><td class="muted">No rows to display.</td></tr>';
+        return;
+      }
+      const columns = Array.from(
+        rows.reduce((set, row) => {
+          Object.keys(row).forEach(k => set.add(k));
+          return set;
+        }, new Set())
+      );
+
+      // Header with sortable buttons
+      const thead = `<thead><tr>${
+        columns.map(col => {
+          const icon = (sortBy === col) ? (sortAsc ? ' ▲' : ' ▼') : '';
+          return `<th><button data-col="${col}">${col}${icon}</button></th>`;
+        }).join('')
+      }</tr></thead>`;
+
+      const tbody = `<tbody>${
+        rows.map(row => {
+          return `<tr>${
+            columns.map(col => {
+              const v = row[col];
+              let out;
+              if (v === null || v === undefined) out = '<span class="muted">null</span>';
+              else if (typeof v === 'object') out = `<code>${escapeHtml(JSON.stringify(v))}</code>`;
+              else out = escapeHtml(String(v));
+              return `<td>${out}</td>`;
+            }).join('')
+          }</tr>`;
+        }).join('')
+      }</tbody>`;
+
+      dataTableEl.innerHTML = thead + tbody;
+
+      // Attach sort handlers
+      dataTableEl.querySelectorAll('th button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const col = btn.getAttribute('data-col');
+          if (sortBy === col) {
+            sortAsc = !sortAsc;
+          } else {
+            sortBy = col;
+            sortAsc = true;
+          }
+          page = 1;
+          loadTableData();
+        });
+      });
+    };
+
+    const escapeHtml = (s) =>
+      s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+
+    // Pagination
+    prevBtn.addEventListener('click', () => {
+      if (page > 1) { page--; loadTableData(); }
+    });
+    nextBtn.addEventListener('click', () => {
+      page++; loadTableData();
+    });
+
+    // Schema selector (extend if you expose more schemas)
+    schemaSelect.addEventListener('change', async () => {
+      currentSchema = schemaSelect.value;
+      currentTable = null;
+      page = 1;
+      sortBy = null;
+      sortAsc = true;
+      currentTableEl.textContent = 'Select a table';
+      rowAccessInfoEl.textContent = '';
+      countInfoEl.textContent = '';
+      dataTableEl.innerHTML = '';
+      await loadRelations();
+    });
+
+    // ====== Boot ======
+    await refreshAuthState();
+    await loadRelations();
+
+    // Optional: listen to auth changes if you add sign-in/out later
+    supabase.auth.onAuthStateChange(async () => {
+      await refreshAuthState();
+      await loadRelations();
+      if (currentTable) await loadTableData();
+    });
+  </script>
+</body>
+</html>

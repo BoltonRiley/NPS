@@ -80,7 +80,7 @@
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) return setStatus(error.message, true);
       setStatus("Signed in. Redirecting…");
-      window.location.href = "view.html";
+      window.location.href = "tester.html";
     });
 
     document.getElementById("signupBtn").addEventListener("click", async () => {
