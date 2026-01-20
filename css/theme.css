@@ -1,0 +1,324 @@
+/*
+  Delaware North–style Theme (custom, clean-room implementation)
+  -----------------------------------------------------------------
+  Author: M365 Copilot (clean-room, not copied from vendor CSS)
+  Purpose: Provide a brand-aligned look & feel for internal apps.
+  Notes: Tweak the CSS variables below to fine‑tune color/spacing.
+*/
+
+/* =====================
+   Design Tokens
+   ===================== */
+:root {
+  /* Color palette (derived from screenshots, adjust as needed) */
+  --dn-navy-900: #0b2b3b;
+  --dn-navy-800: #123e55;
+  --dn-navy-700: #14506e;
+  --dn-navy-600: #16607f;
+
+  --dn-heading:  #0f5a78;    /* large headings / section titles */
+  --dn-body:     #24323a;    /* primary body copy */
+  --dn-muted:    #6a7c88;    /* secondary text */
+  --dn-accent:   #1aa58f;    /* links, CTAs, underlines */
+  --dn-accent-2: #0e7a9a;    /* hover / emphasis */
+  --dn-border:   #d7e0e6;    /* light borders on white */
+  --dn-surface:  #ffffff;    /* card and page surface */
+  --dn-bg:       #f7fafb;    /* subtle page background */
+
+  /* Shadows & radii */
+  --dn-radius-sm: 6px;
+  --dn-radius:    10px;
+  --dn-radius-lg: 14px;
+  --dn-shadow-sm: 0 2px 10px rgba(0,0,0,.06);
+  --dn-shadow:    0 4px 24px rgba(0,0,0,.10);
+
+  /* Layout */
+  --dn-container: 1200px;
+  --dn-gutter: 24px;
+
+  /* Typography scale */
+  --dn-font-sans: "Inter", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --dn-h1: clamp(2rem, 1rem + 3vw, 3.25rem);
+  --dn-h2: clamp(1.6rem, 0.9rem + 2vw, 2.6rem);
+  --dn-h3: clamp(1.25rem, 0.85rem + 1.2vw, 1.6rem);
+  --dn-body-size: 1rem;
+  --dn-leading: 1.65;
+}
+
+/* =====================
+   Base Elements
+   ===================== */
+html, body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--dn-bg);
+  color: var(--dn-body);
+  font-family: var(--dn-font-sans);
+  font-size: var(--dn-body-size);
+  line-height: var(--dn-leading);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+img { max-width: 100%; display: block; }
+
+.container {
+  max-width: var(--dn-container);
+  margin-inline: auto;
+  padding-inline: var(--dn-gutter);
+}
+
+h1, h2, h3 {
+  margin: 0 0 0.6em;
+  color: var(--dn-heading);
+  font-weight: 700;
+}
+
+h1 { font-size: var(--dn-h1); }
+h2 { font-size: var(--dn-h2); }
+h3 { font-size: var(--dn-h3); }
+
+p { margin: 0 0 1em; }
+
+.small { font-size: 0.875rem; }
+.muted { color: var(--dn-muted); }
+
+/* Kicker (section overline) */
+.kicker {
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--dn-muted);
+  margin-bottom: 0.5rem;
+}
+
+/* Emphasized left bar for key paragraph (as in WHO WE ARE) */
+.bar-left {
+  border-left: 3px solid var(--dn-accent);
+  padding-left: 16px;
+  margin: 1rem 0 1.25rem;
+}
+
+/* Links */
+a {
+  color: var(--dn-accent);
+  text-decoration: none;
+}
+a:hover { color: var(--dn-accent-2); }
+
+.link-underline {
+  color: var(--dn-accent);
+  border-bottom: 2px solid currentColor;
+  padding-bottom: 2px;
+  text-decoration: none;
+  font-weight: 600;
+}
+.link-underline:hover { color: var(--dn-accent-2); }
+
+/* Focus styles for accessibility */
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--dn-accent) 70%, white 30%);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* =====================
+   Header / Navigation (dark, translucent over image)
+   ===================== */
+.dn-header {
+  position: relative;
+  background: #0a0f13; /* fallback */
+  color: #fff;
+}
+
+.dn-header--overlay::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,.65), rgba(0,0,0,.45));
+  pointer-events: none;
+}
+
+.dn-nav {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  min-height: 68px;
+  padding-inline: var(--dn-gutter);
+}
+
+.dn-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: #fff;
+  font-weight: 700;
+}
+
+.dn-menu {
+  display: flex;
+  gap: 36px;
+  margin-left: auto;
+}
+
+.dn-menu a {
+  color: rgba(255,255,255,.92);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  font-size: 0.95rem;
+  position: relative;
+  padding: 8px 2px;
+}
+
+/* subtle underline on hover */
+.dn-menu a::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: 4px;
+  height: 2px; background: transparent;
+  transition: background .2s ease;
+}
+.dn-menu a:hover::after,
+.dn-menu a[aria-current="page"]::after {
+  background: var(--dn-accent);
+}
+
+/* =====================
+   Cards & Surfaces
+   ===================== */
+.card {
+  background: var(--dn-surface);
+  border: 1px solid var(--dn-border);
+  border-radius: var(--dn-radius-lg);
+  box-shadow: var(--dn-shadow);
+  padding: 20px;
+}
+
+/* =====================
+   “News & Press” layout
+   ===================== */
+.section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.news-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px;
+}
+
+.news-card {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+}
+
+.news-card .media {
+  border-radius: var(--dn-radius);
+  overflow: hidden;
+  box-shadow: var(--dn-shadow-sm);
+}
+
+.news-card .meta {
+  font-size: 0.85rem;
+  color: var(--dn-muted);
+  margin-bottom: 6px;
+}
+
+.news-card .title a {
+  color: var(--dn-heading);
+  font-weight: 700;
+}
+.news-card .title a:hover { color: var(--dn-accent-2); }
+
+.news-card .excerpt { color: var(--dn-body); }
+
+.news-card .more {
+  margin-top: 6px;
+  font-weight: 600;
+}
+
+/* =====================
+   Buttons (for CTAs like LEARN MORE)
+   ===================== */
+.btn-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--dn-accent);
+  font-weight: 700;
+  text-decoration: none;
+  border-bottom: 2px solid currentColor;
+  padding-bottom: 2px;
+}
+.btn-link:hover { color: var(--dn-accent-2); }
+
+.btn {
+  appearance: none;
+  background: var(--dn-accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--dn-radius);
+  padding: 10px 16px;
+  font-weight: 700;
+  box-shadow: var(--dn-shadow-sm);
+  cursor: pointer;
+}
+.btn:hover { background: var(--dn-accent-2); }
+
+/* =====================
+   Tables (for dashboards)
+   ===================== */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--dn-surface);
+  border: 1px solid var(--dn-border);
+  border-radius: var(--dn-radius);
+  overflow: hidden;
+}
+.table th, .table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--dn-border);
+  vertical-align: top;
+}
+.table th {
+  text-align: left;
+  color: var(--dn-muted);
+  font-weight: 700;
+}
+.table tr:hover td { background: #f4f8fa; }
+
+/* =====================
+   Utilities
+   ===================== */
+.mt-0 { margin-top: 0; }
+.mt-1 { margin-top: .5rem; }
+.mt-2 { margin-top: 1rem; }
+.mt-3 { margin-top: 1.5rem; }
+.mb-0 { margin-bottom: 0; }
+.mb-1 { margin-bottom: .5rem; }
+.mb-2 { margin-bottom: 1rem; }
+.mb-3 { margin-bottom: 1.5rem; }
+
+.text-center { text-align: center; }
+.text-right { text-align: right; }
+
+/* =====================
+   Responsive
+   ===================== */
+@media (max-width: 1024px) {
+  .news-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .dn-menu { gap: 24px; }
+}
+
+@media (max-width: 720px) {
+  .news-grid { grid-template-columns: 1fr; }
+  .dn-nav { min-height: 60px; }
+  .dn-menu { display: none; } /* simple mobile baseline; replace with a drawer if needed */
+}

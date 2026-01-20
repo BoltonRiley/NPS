@@ -62,10 +62,25 @@
   </style>
 </head>
 <body>
+  
   <div class="container">
     <div class="card">
       <h1>NPS Responses — Secure View</h1>
       <p class="desc">Only signed-in users can view these submissions from <code>public.nps_responses</code>.</p>
+
+      <section class="container" style="margin: 28px 0">
+        <h3 class="mt-0">Responses Over Time</h3>
+        <div class="card" role="region" aria-label="Responses over time">
+          <canvas id="responsesChart" height="120"></canvas>
+        </div>
+      </section>
+
+      <section class="container" style="margin: 28px 0">
+        <h3 class="mt-0">NPS Over Time</h3>
+        <div class="card" role="region" aria-label="NPS over time">
+          <canvas id="npsChart" height="120"></canvas>
+        </div>
+      </section>
 
       <!-- Auth-aware toolbar -->
       <div class="toolbar">
@@ -122,230 +137,386 @@
     </div>
   </div>
 
-  <script type="module">
-    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+  
+<!-- Load Chart.js first -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
-    // Your project values
-    const SUPABASE_URL = "https://dsewdgwwoyyoexlbqjgl.supabase.co";
-    const SUPABASE_ANON_KEY = "sb_publishable_kYpN_WBNeJH2PxHSLCtzcA_sXJX4Vsg";
+<!-- Your app + charts in ONE module -->
+<script type="module">
+  import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  // Your project values
+  const SUPABASE_URL = "https://dsewdgwwoyyoexlbqjgl.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_kYpN_WBNeJH2PxHSLCtzcA_sXJX4Vsg";
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // ---- UI refs
-    const tbody = document.getElementById("tbody");
-    const refreshBtn = document.getElementById("refreshBtn");
-    const exportBtn = document.getElementById("exportBtn");
-    const statusEl = document.getElementById("status");
-    const searchEl = document.getElementById("search");
-    const signoutBtn = document.getElementById("signoutBtn");
-    const userChip = document.getElementById("userChip");
+  // ---- UI refs
+  const tbody = document.getElementById("tbody");
+  const refreshBtn = document.getElementById("refreshBtn");
+  const exportBtn = document.getElementById("exportBtn");
+  const statusEl = document.getElementById("status");
+  const searchEl = document.getElementById("search");
+  const signoutBtn = document.getElementById("signoutBtn");
+  const userChip = document.getElementById("userChip");
 
-    const kCount = document.getElementById("kpi-count");
-    const kAvg = document.getElementById("kpi-avg");
-    const kPromoters = document.getElementById("kpi-promoters");
-    const kPassives = document.getElementById("kpi-passives");
-    const kDetractors = document.getElementById("kpi-detractors");
-    const kNPS = document.getElementById("kNPS"); // fixed id
+  const kCount = document.getElementById("kpi-count");
+  const kAvg = document.getElementById("kpi-avg");
+  const kPromoters = document.getElementById("kpi-promoters");
+  const kPassives = document.getElementById("kpi-passives");
+  const kDetractors = document.getElementById("kpi-detractors");
+  const kNPS = document.getElementById("kNPS");
 
-    // ---- sorting state
-    let currentSort = { column: "created_at", dir: "desc" }; // or 'asc'
-    let fullData = [];   // All rows fetched (no pagination)
+  // Charts canvases
+  const responsesCanvas = document.getElementById("responsesChart");
+  const npsCanvas = document.getElementById("npsChart");
 
-    function setStatus(msg, type = "") {
-      statusEl.textContent = msg || "";
-      statusEl.className = "status " + (type || "");
+  // ---- sorting state
+  let currentSort = { column: "created_at", dir: "desc" };
+  let fullData = [];
+  let responsesChartInstance = null;
+  let npsChartInstance = null;
+
+  function setStatus(msg, type = "") {
+    statusEl.textContent = msg || "";
+    statusEl.className = "status " + (type || "");
+  }
+
+  function fmtDate(iso) {
+    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+  }
+
+  function segmentFor(score) {
+    const s = Number(score);
+    if (!Number.isFinite(s)) return "unknown";
+    if (s >= 9) return "promoter";
+    if (s >= 7) return "passive";
+    return "detractor";
+  }
+
+  function renderSummary(rows) {
+    const scores = rows.map(r => Number(r.score)).filter(s => Number.isFinite(s));
+    const count = scores.length;
+    const sum = scores.reduce((a, s) => a + s, 0);
+    const avg = count ? (sum / count) : null;
+
+    const detractors = scores.filter(s => s <= 6).length;
+    const passives   = scores.filter(s => s >= 7 && s <= 8).length;
+    const promoters  = scores.filter(s => s >= 9).length;
+
+    const pct = (n) => count ? Math.round((n * 100) / count) : 0;
+    const nps = count ? Math.round(((promoters - detractors) * 100) / count) : null;
+
+    if (kCount)      kCount.textContent = count.toString();
+    if (kAvg)        kAvg.textContent   = avg !== null ? avg.toFixed(2) : "—";
+    if (kNPS)        kNPS.textContent   = nps !== null ? (nps > 0 ? `+${nps}` : `${nps}`) : "—";
+    if (kPromoters)  kPromoters.textContent  = `${promoters} (${pct(promoters)}%)`;
+    if (kPassives)   kPassives.textContent   = `${passives} (${pct(passives)}%)`;
+    if (kDetractors) kDetractors.textContent = `${detractors} (${pct(detractors)}%)`;
+  }
+
+  function compare(a, b, col, dir) {
+    const va = a[col];
+    const vb = b[col];
+    let cmp = 0;
+    if (col === "score") {
+      cmp = (Number(va) || 0) - (Number(vb) || 0);
+    } else if (col === "created_at") {
+      cmp = new Date(va) - new Date(vb);
+    } else {
+      cmp = String(va || "").localeCompare(String(vb || ""), undefined, { sensitivity: "base" });
     }
+    return dir === "asc" ? cmp : -cmp;
+  }
 
-    function fmtDate(iso) {
-      try { return new Date(iso).toLocaleString(); } catch { return iso; }
+  function sanitize(text) {
+    return String(text ?? "").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  function renderTable(rows) {
+    tbody.innerHTML = "";
+    const frag = document.createDocumentFragment();
+    for (const r of rows) {
+      const seg = segmentFor(r.score);
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${fmtDate(r.created_at)}</td>
+        <td class="hide-sm score">${sanitize(r.score)}</td>
+        <td><span class="pill ${seg}">${seg}</span></td>
+        <td>${sanitize(r.feedback)}</td>
+      `;
+      frag.appendChild(tr);
     }
+    tbody.appendChild(frag);
+  }
 
-    function segmentFor(score) {
-      const s = Number(score);
-      if (!Number.isFinite(s)) return "unknown";
-      if (s >= 9) return "promoter";
-      if (s >= 7) return "passive";
-      return "detractor";
+  function getFiltered() {
+    const q = (searchEl.value || "").trim().toLowerCase();
+    if (!q) return fullData;
+    return fullData.filter(r => (r.feedback || "").toLowerCase().includes(q));
+  }
+
+  /* -------------------------
+     Charts helpers (merged)
+     ------------------------- */
+  function toYMD(dateLike) {
+    const d = new Date(dateLike);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function movingAverage(arr, windowSize = 7) {
+    if (!arr.length || windowSize <= 1) return Array.from(arr);
+    const out = []; let sum = 0; const q = [];
+    for (let i = 0; i < arr.length; i++) {
+      sum += arr[i]; q.push(arr[i]);
+      if (q.length > windowSize) sum -= q.shift();
+      out.push(sum / q.length);
     }
+    return out;
+  }
 
-    function renderSummary(rows) {
-      // Normalize scores to numbers and filter out invalid entries
-      const scores = rows
-        .map(r => Number(r.score))
-        .filter(s => Number.isFinite(s)); // keep only valid numeric scores
-
-      const count = scores.length;
-      const sum = scores.reduce((a, s) => a + s, 0);
-      const avg = count ? (sum / count) : null;
-
+  function aggregateByDay(rows) {
+    const byDay = new Map();
+    for (const r of rows) {
+      const day = toYMD(r.created_at);
+      const s = Number(r.score);
+      if (!Number.isFinite(s)) continue;
+      if (!byDay.has(day)) byDay.set(day, { count: 0, scores: [] });
+      const obj = byDay.get(day);
+      obj.count += 1;
+      obj.scores.push(s);
+    }
+    const dates = Array.from(byDay.keys()).sort();
+    const counts = [];
+    const nps = [];
+    for (const d of dates) {
+      const { count, scores } = byDay.get(d);
       const detractors = scores.filter(s => s <= 6).length;
-      const passives   = scores.filter(s => s >= 7 && s <= 8).length;
       const promoters  = scores.filter(s => s >= 9).length;
+      const dailyNps = count ? ((promoters - detractors) * 100) / count : 0;
+      counts.push(count);
+      nps.push(dailyNps);
+    }
+    return { dates, counts, nps };
+  }
 
-      // Percentages (integer; change to .toFixed(1) if you want decimals)
-      const pct = (n) => count ? Math.round((n * 100) / count) : 0;
+  function renderTimeCharts(rows) {
+    const { dates, counts, nps } = aggregateByDay(rows);
+    const ma7 = movingAverage(counts, 7);
+    const prefersReduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-      // Standard NPS (-100..100)
-      const nps = count ? Math.round(((promoters - detractors) * 100) / count) : null;
+    // Clean up old instances on re-render
+    if (responsesChartInstance) responsesChartInstance.destroy();
+    if (npsChartInstance) npsChartInstance.destroy();
 
-      // Update the DOM
-      if (kCount)      kCount.textContent = count.toString();
-      if (kAvg)        kAvg.textContent   = avg !== null ? avg.toFixed(2) : "—";
+    // Fallback colors (you’re using dark tokens; fallbacks ensure contrast)
+    const colorText = '#e5ecf4';
+    const colorMuted = '#9aa4b2';
+    const colorAccent = '#22c55e';
+    const colorAccent2 = '#4f46e5';
+    const gridColor = '#223047';
 
-      // Show the standard NPS number, with sign for positive values
-      if (kNPS)        kNPS.textContent   = nps !== null ? (nps > 0 ? `+${nps}` : `${nps}`) : "—";
-
-      // Breakdown KPIs
-      if (kPromoters)  kPromoters.textContent  = `${promoters} (${pct(promoters)}%)`;
-      if (kPassives)   kPassives.textContent   = `${passives} (${pct(passives)}%)`;
-      if (kDetractors) kDetractors.textContent = `${detractors} (${pct(detractors)}%)`;
+    if (responsesCanvas) {
+      responsesChartInstance = new Chart(responsesCanvas, {
+        type: 'bar',
+        data: {
+          labels: dates,
+          datasets: [
+            {
+              type: 'bar',
+              label: 'Responses',
+              data: counts,
+              backgroundColor: colorAccent + 'cc',
+              borderColor: colorAccent,
+              borderWidth: 1,
+              borderRadius: 4,
+              yAxisID: 'y',
+            },
+            {
+              type: 'line',
+              label: '7-day average',
+              data: ma7.map(v => Number.isFinite(v) ? Number(v.toFixed(2)) : null),
+              borderColor: colorAccent2,
+              backgroundColor: colorAccent2,
+              borderWidth: 2,
+              tension: prefersReduce ? 0 : 0.25,
+              pointRadius: 0,
+              yAxisID: 'y',
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { labels: { color: colorText, font: { weight: '700' } } },
+            tooltip: {
+              callbacks: {
+                title: (items) => {
+                  const d = items?.[0]?.label;
+                  return d ? new Date(d + 'T00:00:00').toLocaleDateString() : '';
+                }
+              }
+            }
+          },
+          scales: {
+            x: { ticks: { color: colorMuted }, grid: { display: false } },
+            y: { beginAtZero: true, ticks: { color: colorMuted, precision: 0 }, grid: { color: gridColor } }
+          },
+          animation: prefersReduce ? false : { duration: 300 }
+        }
+      });
     }
 
-    function compare(a, b, col, dir) {
-      const va = a[col];
-      const vb = b[col];
-      let cmp = 0;
-      if (col === "score") {
-        cmp = (Number(va) || 0) - (Number(vb) || 0);
-      } else if (col === "created_at") {
-        cmp = new Date(va) - new Date(vb);
-      } else {
-        cmp = String(va || "").localeCompare(String(vb || ""), undefined, { sensitivity: "base" });
-      }
-      return dir === "asc" ? cmp : -cmp;
+    if (npsCanvas) {
+      npsChartInstance = new Chart(npsCanvas, {
+        type: 'line',
+        data: {
+          labels: dates,
+          datasets: [
+            {
+              label: 'Daily NPS',
+              data: nps.map(v => Number(v.toFixed(2))),
+              borderColor: colorAccent,
+              backgroundColor: colorAccent,
+              borderWidth: 2,
+              tension: prefersReduce ? 0 : 0.25,
+              pointRadius: 0,
+              yAxisID: 'y',
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { labels: { color: colorText, font: { weight: '700' } } },
+            tooltip: {
+              callbacks: {
+                title: (items) => {
+                  const d = items?.[0]?.label;
+                  return d ? new Date(d + 'T00:00:00').toLocaleDateString() : '';
+                },
+                label: (ctx) => `NPS: ${Math.round(ctx.parsed.y)}`
+              }
+            }
+          },
+          scales: {
+            x: { ticks: { color: colorMuted }, grid: { display: false } },
+            y: { suggestedMin: -100, suggestedMax: 100, ticks: { color: colorMuted, stepSize: 20 }, grid: { color: gridColor } }
+          },
+          animation: prefersReduce ? false : { duration: 300 }
+        }
+      });
     }
+  }
 
-    function sanitize(text) {
-      return String(text ?? "").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  function render() {
+    const filtered = [...getFiltered()].sort((a,b)=>compare(a,b,currentSort.column,currentSort.dir));
+    renderSummary(filtered);
+    renderTimeCharts(filtered);        // <-- now charts render with the current filter
+    renderTable(filtered);
+  }
+
+  async function fetchAll() {
+    setStatus("Loading…");
+    const { data, error } = await supabase
+      .from("nps_responses")
+      .select("score, feedback, created_at")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      setStatus(`Load failed: ${error.message}`, "err");
+      return;
     }
+    fullData = data || [];
+    setStatus(`Loaded ${fullData.length} row(s).`, "ok");
+    render();
+  }
 
-    function renderTable(rows) {
-      tbody.innerHTML = "";
-      const frag = document.createDocumentFragment();
-      for (const r of rows) {
-        const seg = segmentFor(r.score);
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${fmtDate(r.created_at)}</td>
-          <td class="hide-sm score">${sanitize(r.score)}</td>
-          <td><span class="pill ${seg}">${seg}</span></td>
-          <td>${sanitize(r.feedback)}</td>
-        `;
-        frag.appendChild(tr);
-      }
-      tbody.appendChild(frag);
-    }
+  function wireSorting() {
+    document.querySelectorAll("th[data-sort]").forEach(th => {
+      th.addEventListener("click", () => {
+        const col = th.getAttribute("data-sort");
+        if (currentSort.column === col) {
+          currentSort.dir = currentSort.dir === "asc" ? "desc" : "asc";
+        } else {
+          currentSort = { column: col, dir: (col === "created_at" ? "desc" : "asc") };
+        }
+        render();
+      });
+    });
+  }
 
-    function getFiltered() {
-      const q = (searchEl.value || "").trim().toLowerCase();
-      if (!q) return fullData;
-      return fullData.filter(r => (r.feedback || "").toLowerCase().includes(q));
-    }
-
-    function render() {
+  function wireActions() {
+    refreshBtn.addEventListener("click", fetchAll);
+    exportBtn.addEventListener("click", () => {
       const filtered = [...getFiltered()].sort((a,b)=>compare(a,b,currentSort.column,currentSort.dir));
-      renderSummary(filtered);
-      renderTable(filtered);
+      const rows = [["created_at","score","segment","feedback"], ...filtered.map(r => [
+        r.created_at,
+        r.score,
+        segmentFor(r.score),
+        (r.feedback || "").replaceAll('"','""')
+      ])];
+      const csv = rows.map(r => r.map(v => `"${String(v ?? "")}"`).join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `nps_responses_all_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    signoutBtn.addEventListener("click", async () => {
+      await supabase.auth.signOut();
+      window.location.href = "login.html";
+    });
+
+    searchEl.addEventListener("input", render);
+  }
+
+  async function requireSession() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      window.location.href = "login.html";
+      throw new Error("Not authenticated");
     }
+    const userEmail = session.user?.email || "Signed in";
+    userChip.textContent = userEmail;
+    userChip.style.display = "inline-block";
+    signoutBtn.style.display = "inline-block";
 
-    async function fetchAll() {
-      setStatus("Loading…");
-      const { data, error } = await supabase
-        .from("nps_responses")
-        .select("score, feedback, created_at")
-        .order("created_at", { ascending: false });
+    supabase.auth.onAuthStateChange((_event, sess) => {
+      if (!sess) window.location.href = "login.html";
+    });
 
-      if (error) {
-        console.error(error);
-        setStatus(`Load failed: ${error.message}`, "err");
-        return;
-      }
-      fullData = data || [];
-      setStatus(`Loaded ${fullData.length} row(s).`, "ok");
-      render();
+    return session;
+  }
+
+  async function init() {
+    try {
+      wireSorting();
+      wireActions();
+      await requireSession();
+      await fetchAll();
+    } catch (e) {
+      if (String(e?.message || "").includes("Not authenticated")) return;
+      console.error(e);
+      setStatus("Unexpected error. See console.", "err");
     }
+  }
 
-    function wireSorting() {
-      document.querySelectorAll("th[data-sort]").forEach(th => {
-        th.addEventListener("click", () => {
-          const col = th.getAttribute("data-sort");
-          if (currentSort.column === col) {
-            currentSort.dir = currentSort.dir === "asc" ? "desc" : "asc";
-          } else {
-            currentSort = { column: col, dir: (col === "created_at" ? "desc" : "asc") };
-          }
-          render();
-        });
-      });
-    }
+  init();
+</script>
 
-    function wireActions() {
-      refreshBtn.addEventListener("click", fetchAll);
-      exportBtn.addEventListener("click", () => {
-        const filtered = [...getFiltered()].sort((a,b)=>compare(a,b,currentSort.column,currentSort.dir));
-        const rows = [["created_at","score","segment","feedback"], ...filtered.map(r => [
-          r.created_at,
-          r.score,
-          segmentFor(r.score),
-          (r.feedback || "").replaceAll('"','""')
-        ])];
-        const csv = rows.map(r => r.map(v => `"${String(v ?? "")}"`).join(",")).join("\n");
-        const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `nps_responses_all_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      });
 
-      signoutBtn.addEventListener("click", async () => {
-        await supabase.auth.signOut();
-        window.location.href = "login.html";
-      });
-
-      searchEl.addEventListener("input", render);
-    }
-
-    async function requireSession() {
-      // Redirect to login if no session
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        window.location.href = "login.html";
-        throw new Error("Not authenticated");
-      }
-
-      // Show user chip + signout
-      const userEmail = session.user?.email || "Signed in";
-      userChip.textContent = userEmail;
-      userChip.style.display = "inline-block";
-      signoutBtn.style.display = "inline-block";
-
-      // If user signs out in another tab, bounce back to login
-      supabase.auth.onAuthStateChange((_event, sess) => {
-        if (!sess) window.location.href = "login.html";
-      });
-
-      return session;
-    }
-
-    async function init() {
-      try {
-        wireSorting();
-        wireActions();
-        await requireSession();
-        await fetchAll();
-      } catch (e) {
-        // Swallow error if we intentionally redirected
-        if (String(e?.message || "").includes("Not authenticated")) return;
-        console.error(e);
-        setStatus("Unexpected error. See console.", "err");
-      }
-    }
-
-    init();
-  </script>
 </body>
 </html>
